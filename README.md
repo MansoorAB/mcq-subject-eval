@@ -19,7 +19,7 @@ A GenAI-powered FastAPI application that converts multiple PDF documents into mu
 
 ## Prerequisites
 
-- Python 3.8 or higher
+- Python 3.12 
 - 8GB+ RAM (16GB recommended for optimal performance)
 - Hugging Face account and token (for downloading models)
 - Gemma-3-4B-IT model (will be downloaded automatically)
@@ -27,9 +27,12 @@ A GenAI-powered FastAPI application that converts multiple PDF documents into mu
 ## Installation
 
 1. **Activate your conda environment**:
+   You need to have Anaconda installed on your machine
+   Go to the project directory and run...
+   
    ```bash
+   conda create -n your_env_name python=3.12 -y
    conda activate your_env_name
-   cd /Users/mansoor/Documents/genai/03_mcq_testing_app
    ```
 
 2. **Install dependencies**:
