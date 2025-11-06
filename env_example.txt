@@ -1,12 +1,16 @@
 # Copy this to .env and fill in your values
 
-# Hugging Face Configuration
+# OpenAI Configuration (for GPT-4o-mini)
+OPENAI_API_KEY="sk-your-openai-api-key-here"
+
+# Hugging Face Configuration (for Gemma model)
 HUGGINGFACE_HUB_TOKEN="hf_your_token_here"
 
-# Model Configuration
+# Model Configuration (for Gemma)
 MODEL_PATH="unsloth/gemma-3-4b-it-GGUF"
 MODEL_FILENAME="gemma-3-4b-it-Q4_0.gguf"
 DEVICE="cpu"
+USE_GGUF=true
 
 # Application Configuration
 CHUNK_SIZE=800

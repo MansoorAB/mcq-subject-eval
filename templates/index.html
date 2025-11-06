@@ -452,6 +452,19 @@
                     <div class="file-list" id="fileList"></div>
 
                     <div class="settings">
+                        <div class="setting-group" style="grid-column: 1 / -1;">
+                            <label>Model Selection</label>
+                            <div style="display: flex; gap: 20px; margin-top: 10px;">
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" name="modelType" value="openai" id="modelOpenAI" checked style="margin-right: 8px; width: auto;">
+                                    <span>OpenAI (GPT-4o-mini) - Fast ⚡</span>
+                                </label>
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" name="modelType" value="gemma" id="modelGemma" style="margin-right: 8px; width: auto;">
+                                    <span>Gemma (Local) - Free 🆓</span>
+                                </label>
+                            </div>
+                        </div>
                         <div class="setting-group">
                             <label for="questionsPerPdf">Questions per PDF</label>
                             <input type="number" id="questionsPerPdf" value="10" min="1" max="50">
@@ -520,21 +533,56 @@
 
         async function checkModelStatus() {
             try {
-                const response = await fetch('/model-info');
+                // Check OpenAI model status (default)
+                const response = await fetch('/model-info?model_type=openai');
                 const data = await response.json();
                 
                 const statusElement = document.getElementById('modelStatus');
                 if (data.model_loaded) {
-                    statusElement.textContent = `✅ ${data.model_name} loaded on ${data.device}`;
+                    statusElement.textContent = `✅ ${data.model_name} (${data.model_type}) - Ready`;
                     document.getElementById('modelInfo').style.background = '#e8f5e8';
                 } else {
-                    statusElement.textContent = `⚠️ Model not loaded: ${data.error || 'Unknown error'}`;
+                    statusElement.textContent = `⚠️ OpenAI model not available: ${data.error || 'Check API key'}`;
                     document.getElementById('modelInfo').style.background = '#fff3cd';
                 }
             } catch (error) {
                 document.getElementById('modelStatus').textContent = '❌ Error checking model status';
                 document.getElementById('modelInfo').style.background = '#f8d7da';
             }
+        }
+        
+        // Update model status when radio button changes
+        function setupModelTypeListeners() {
+            const radioButtons = document.querySelectorAll('input[name="modelType"]');
+            radioButtons.forEach(radio => {
+                radio.addEventListener('change', async function() {
+                    const modelType = this.value;
+                    try {
+                        const response = await fetch(`/model-info?model_type=${modelType}`);
+                        const data = await response.json();
+                        
+                        const statusElement = document.getElementById('modelStatus');
+                        if (data.model_loaded) {
+                            const deviceInfo = data.device ? ` on ${data.device}` : '';
+                            statusElement.textContent = `✅ ${data.model_name || data.model_type}${deviceInfo} - Ready`;
+                            document.getElementById('modelInfo').style.background = '#e8f5e8';
+                        } else {
+                            statusElement.textContent = `⚠️ ${data.model_type} not available: ${data.error || 'Check configuration'}`;
+                            document.getElementById('modelInfo').style.background = '#fff3cd';
+                        }
+                    } catch (error) {
+                        document.getElementById('modelStatus').textContent = '❌ Error checking model status';
+                        document.getElementById('modelInfo').style.background = '#f8d7da';
+                    }
+                });
+            });
+        }
+        
+        // Setup listeners when page loads
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', setupModelTypeListeners);
+        } else {
+            setupModelTypeListeners();
         }
 
         function switchTab(tabName) {
@@ -643,6 +691,10 @@
             formData.append('questions_per_pdf', document.getElementById('questionsPerPdf').value);
             formData.append('chunk_size', document.getElementById('chunkSize').value);
             formData.append('overlap', document.getElementById('overlap').value);
+            
+            // Get selected model type
+            const modelType = document.querySelector('input[name="modelType"]:checked').value;
+            formData.append('model_type', modelType);
 
             // Show loading
             document.getElementById('loading').style.display = 'block';

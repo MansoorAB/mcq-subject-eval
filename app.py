@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from pdf_processor import PDFProcessor
 from mcq_generator import MCQGenerator
 from mcq_generator_gguf import MCQGeneratorGGUF
+from mcq_generator_openai import MCQGeneratorOpenAI
 from mcq_storage import MCQStorage
 from logger_config import get_logger
 
@@ -43,8 +44,9 @@ mcq_storage = MCQStorage()
 # Choose generator type based on environment
 USE_GGUF = os.getenv('USE_GGUF', 'true').lower() == 'true'
 
-# Global MCQ generator (lazy loading)
-mcq_generator = None
+# Global MCQ generators (lazy loading) - separate instances for each model type
+mcq_generator_openai = None
+mcq_generator_gemma = None
 
 
 def allowed_file(filename: str) -> bool:
@@ -53,19 +55,42 @@ def allowed_file(filename: str) -> bool:
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-def initialize_mcq_generator():
-    """Initialize MCQ generator (lazy loading)"""
-    global mcq_generator
-    if mcq_generator is None:
-        logger.info("Initializing MCQ generator...")
-        if USE_GGUF:
-            logger.info("Using GGUF quantized model")
-            mcq_generator = MCQGeneratorGGUF()
-        else:
-            logger.info("Using standard transformers model")
-            mcq_generator = MCQGenerator(device=os.getenv('DEVICE', 'cpu'))
-        logger.info("MCQ generator initialized!")
-    return mcq_generator
+def initialize_mcq_generator(model_type: str = "openai"):
+    """
+    Initialize MCQ generator (lazy loading)
+    
+    Args:
+        model_type: "openai" or "gemma"
+    
+    Returns:
+        Initialized MCQ generator instance
+    """
+    global mcq_generator_openai, mcq_generator_gemma
+    
+    if model_type == "openai":
+        if mcq_generator_openai is None:
+            logger.info("Initializing OpenAI MCQ generator...")
+            try:
+                mcq_generator_openai = MCQGeneratorOpenAI()
+                logger.info("OpenAI MCQ generator initialized!")
+            except Exception as e:
+                logger.error(f"Failed to initialize OpenAI generator: {str(e)}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to initialize OpenAI generator: {str(e)}. Please check your OPENAI_API_KEY in .env file."
+                )
+        return mcq_generator_openai
+    else:  # gemma
+        if mcq_generator_gemma is None:
+            logger.info("Initializing Gemma MCQ generator...")
+            if USE_GGUF:
+                logger.info("Using GGUF quantized model")
+                mcq_generator_gemma = MCQGeneratorGGUF()
+            else:
+                logger.info("Using standard transformers model")
+                mcq_generator_gemma = MCQGenerator(device=os.getenv('DEVICE', 'cpu'))
+            logger.info("Gemma MCQ generator initialized!")
+        return mcq_generator_gemma
 
 
 def select_chunks_for_questions(chunks: List[Dict], num_questions: int, chunk_size: int, overlap: int) -> List[Dict]:
@@ -124,7 +149,8 @@ async def generate_mcqs(
     files: List[UploadFile] = File(...),
     questions_per_pdf: int = Form(default=10),
     chunk_size: int = Form(default=1000),
-    overlap: int = Form(default=100)
+    overlap: int = Form(default=100),
+    model_type: str = Form(default="openai")
 ):
     """
     Generate MCQs from uploaded PDF files
@@ -134,8 +160,16 @@ async def generate_mcqs(
         questions_per_pdf: Number of questions to generate per PDF
         chunk_size: Size of text chunks (from config)
         overlap: Overlap between chunks (from config)
+        model_type: Model to use - "openai" or "gemma" (default: "openai")
     """
     try:
+        # Validate model_type
+        if model_type not in ["openai", "gemma"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid model_type: {model_type}. Must be 'openai' or 'gemma'."
+            )
+        
         # Validate number of files
         if len(files) > MAX_FILES:
             raise HTTPException(
@@ -154,8 +188,9 @@ async def generate_mcqs(
                     detail=f"Only PDF files are allowed. File '{file.filename}' is not a PDF."
                 )
         
-        # Initialize MCQ generator
-        generator = initialize_mcq_generator()
+        # Initialize MCQ generator based on model_type
+        logger.info(f"Using model type: {model_type}")
+        generator = initialize_mcq_generator(model_type=model_type)
         
         # Process each PDF
         all_results = []
@@ -253,7 +288,8 @@ async def generate_mcqs(
                             'selected_chunks': len(selected_chunks),
                             'total_chunks': len(chunks),
                             'file_index': file_idx + 1,
-                            'total_files': len(files)
+                            'total_files': len(files),
+                            'model_type': model_type
                         }
                     )
                     logger.info(f"MCQs saved to: {saved_file}")
@@ -289,6 +325,7 @@ async def generate_mcqs(
             'questions_per_pdf': questions_per_pdf,
             'chunk_size': chunk_size,
             'overlap': overlap,
+            'model_type': model_type,
             'file_results': all_results,
             'all_questions': all_questions
         }
@@ -310,30 +347,63 @@ async def health_check():
 
 
 @app.get("/model-info")
-async def model_info():
-    """Get information about the loaded model"""
+async def model_info(model_type: str = "openai"):
+    """
+    Get information about the loaded model
+    
+    Args:
+        model_type: "openai" or "gemma" (default: "openai")
+    """
     try:
-        generator = initialize_mcq_generator()
-        if USE_GGUF:
-            return {
-                'model_name': os.getenv('MODEL_PATH', 'unsloth/gemma-3-4b-it-GGUF'),
-                'model_filename': os.getenv('MODEL_FILENAME', 'gemma-3-4b-it-Q4_0.gguf'),
-                'model_type': 'GGUF Quantized',
-                'device': generator.device,
-                'model_loaded': True
-            }
-        else:
-            return {
-                'model_name': 'google/gemma-3-4b-it',
-                'model_type': 'Standard Transformers',
-                'device': generator.device,
-                'model_loaded': True
-            }
+        if model_type == "openai":
+            try:
+                generator = initialize_mcq_generator("openai")
+                return {
+                    'model_name': generator.model_name,
+                    'model_type': 'OpenAI API',
+                    'model_loaded': True,
+                    'provider': 'OpenAI'
+                }
+            except Exception as e:
+                return {
+                    'model_name': os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
+                    'model_type': 'OpenAI API',
+                    'model_loaded': False,
+                    'error': str(e),
+                    'provider': 'OpenAI'
+                }
+        else:  # gemma
+            try:
+                generator = initialize_mcq_generator("gemma")
+                if USE_GGUF:
+                    return {
+                        'model_name': os.getenv('MODEL_PATH', 'unsloth/gemma-3-4b-it-GGUF'),
+                        'model_filename': os.getenv('MODEL_FILENAME', 'gemma-3-4b-it-Q4_0.gguf'),
+                        'model_type': 'GGUF Quantized',
+                        'device': generator.device,
+                        'model_loaded': True,
+                        'provider': 'Local'
+                    }
+                else:
+                    return {
+                        'model_name': 'google/gemma-3-4b-it',
+                        'model_type': 'Standard Transformers',
+                        'device': generator.device,
+                        'model_loaded': True,
+                        'provider': 'Local'
+                    }
+            except Exception as e:
+                return {
+                    'model_name': os.getenv('MODEL_PATH', 'unsloth/gemma-3-4b-it-GGUF'),
+                    'model_type': 'GGUF Quantized' if USE_GGUF else 'Standard Transformers',
+                    'device': os.getenv('DEVICE', 'cpu'),
+                    'model_loaded': False,
+                    'error': str(e),
+                    'provider': 'Local'
+                }
     except Exception as e:
         return {
-            'model_name': os.getenv('MODEL_PATH', 'unsloth/gemma-3-4b-it-GGUF'),
-            'model_type': 'GGUF Quantized' if USE_GGUF else 'Standard Transformers',
-            'device': os.getenv('DEVICE', 'cpu'),
+            'model_type': 'Unknown',
             'model_loaded': False,
             'error': str(e)
         }
